@@ -1,0 +1,152 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: raelm_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-raelm}
+      POSTGRES_USER: ${POSTGRES_USER:-raelm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-raelm_dev_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raelm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - raelm-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: raelm_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - raelm-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: raelm_minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - raelm-network
+
+  mlflow:
+    image: python:3.11-slim
+    container_name: raelm_mlflow
+    working_dir: /mlflow
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER:-raelm}:${POSTGRES_PASSWORD:-raelm_dev_pass}@postgres:5432/${POSTGRES_DB:-raelm}
+      MLFLOW_ARTIFACT_ROOT: s3://mlflow-artifacts
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: >
+      sh -c "pip install mlflow boto3 psycopg2-binary &&
+             mlflow server --host 0.0.0.0 --port 5000
+             --backend-store-uri $$MLFLOW_BACKEND_STORE_URI
+             --default-artifact-root $$MLFLOW_ARTIFACT_ROOT"
+    networks:
+      - raelm-network
+
+  labelstudio:
+    image: heartexlabs/label-studio:latest
+    container_name: raelm_labelstudio
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /data
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DB: ${POSTGRES_DB:-raelm}
+      POSTGRESQL_USER: ${POSTGRES_USER:-raelm}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-raelm_dev_pass}
+    volumes:
+      - labelstudio_data:/label-studio/data
+      - ../datasets:/data:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - raelm-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: raelm_prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - raelm-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: raelm_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - raelm-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  labelstudio_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  raelm-network:
+    driver: bridge
+

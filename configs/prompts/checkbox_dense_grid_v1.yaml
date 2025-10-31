@@ -1,0 +1,18 @@
+# Prompt template for dense checkbox grids
+
+template: |
+  Analyze this checkbox grid from a medical form.
+  Identify each checkbox, its label, and whether it is checked.
+  
+  Return a JSON array with format:
+  [{"label": "symptom name", "checked": true/false}, ...]
+  
+  Only include checkboxes that are clearly visible.
+
+version: "v1.0"
+region_type: checkbox
+difficulty_range: [0.3, 0.7]
+few_shot_examples: []
+expected_output_schema: "checkbox_list_v1"
+historical_accuracy: 0.85
+

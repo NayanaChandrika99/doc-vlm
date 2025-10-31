@@ -1,0 +1,23 @@
+# Prompt template for simple tables
+
+template: |
+  Extract the table data from this medical form.
+  
+  Return a JSON object with format:
+  {
+    "headers": ["col1", "col2", ...],
+    "rows": [
+      ["val1", "val2", ...],
+      ...
+    ]
+  }
+  
+  Preserve the exact text in each cell.
+
+version: "v1.0"
+region_type: table
+difficulty_range: [0.2, 0.5]
+few_shot_examples: []
+expected_output_schema: "table_v1"
+historical_accuracy: 0.78
+
